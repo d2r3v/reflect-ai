@@ -145,7 +145,11 @@ When a user sends a message, the backend executes the following flow:
    - Returns risk level: low, medium, high, or critical
 
 4. **Check for Critical Risk**
-   - If **critical**: jump to step 10 (deterministic crisis response)
+   - If **critical**: enter deterministic crisis-response path (does not proceed to later steps)
+     - Log a structured safety event (including user ID, timestamp, and risk classification)
+     - Route to a predefined, non-personalized crisis-response message set (no normal mode selection)
+     - Avoid calling the general Conversation Engine or writing new long-term memories
+     - Return crisis-response output to the client and terminate the pipeline
    - If **non-critical**: continue to step 5
 
 5. **Retrieve Context**
