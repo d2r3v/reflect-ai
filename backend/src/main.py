@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.config import settings
 from src.logging_config import logger
-from src.routes import health
+from src.routes import health, chat
 
 
 def create_app() -> FastAPI:
@@ -25,6 +25,7 @@ def create_app() -> FastAPI:
     
     # Routes
     app.include_router(health.router)
+    app.include_router(chat.router)
     
     logger.info(f"FastAPI app initialized: {settings.app_name} v{settings.app_version}")
     

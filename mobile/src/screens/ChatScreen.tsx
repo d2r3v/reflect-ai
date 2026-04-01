@@ -17,13 +17,34 @@ export default function ChatScreen({ navigation }: Props) {
     { id: "1", role: "assistant", content: "Hi! How are you doing today?" },
   ]);
 
-  const handleSendMessage = () => {
-    if (inputText.trim()) {
-      setMessages([
-        ...messages,
-        { id: String(messages.length + 1), role: "user", content: inputText },
-      ]);
-      setInputText("");
+  const handleSendMessage = async () => {
+    if (!inputText.trim()) return;
+
+    const userMessage = { id: String(messages.length + 1), role: "user" as const, content: inputText };
+    setMessages((prev) => [...prev, userMessage]);
+    setInputText("");
+
+    try {
+      // For the vertical slice, we call the test endpoint
+      // Using Android localhost shortcut (10.0.2.2) if on emulator, or actual IP
+      // Using API_BASE_URL from env if available
+      const response = await fetch("http://10.0.2.2:8000/api/v1/chat/test");
+      const data = await response.json();
+
+      const assistantMessage = {
+        id: String(messages.length + 2),
+        role: "assistant" as const,
+        content: data.reply,
+      };
+      setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error("Error fetching from backend:", error);
+      const errorMessage = {
+        id: String(messages.length + 3),
+        role: "assistant" as const,
+        content: "Error connecting to backend. Make sure the server is running.",
+      };
+      setMessages((prev) => [...prev, errorMessage]);
     }
   };
 

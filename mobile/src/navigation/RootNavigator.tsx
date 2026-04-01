@@ -23,8 +23,8 @@ export function RootNavigator() {
     // Simulate auth check (will be replaced with real auth logic)
     const timer = setTimeout(() => {
       setIsLoading(false);
-      // For now, start at auth flow
-      setIsSignedIn(false);
+      // TEMPORARY: Bypass login for development
+      setIsSignedIn(true);
     }, 1000);
 
     return () => clearTimeout(timer);
