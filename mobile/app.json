@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "Memory-Aware Support Companion",
+    "slug": "memory-aware-support-companion",
+    "version": "0.1.0",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTabletMode": true
+    },
+    "android": {},
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
