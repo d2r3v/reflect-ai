@@ -5,30 +5,12 @@ import { AuthNavigator } from "./AuthNavigator";
 import { AppNavigator } from "./AppNavigator";
 import SplashScreen from "../screens/SplashScreen";
 
+import { useAuth } from "../context/AuthContext";
+
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-/**
- * RootNavigator
- * Top-level navigator that handles auth state and route selection.
- * Flows:
- * - Splash (initial load)
- * - Auth (login/signup) if not authenticated
- * - App (main app) if authenticated
- */
 export function RootNavigator() {
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSignedIn, setIsSignedIn] = useState(false);
-
-  useEffect(() => {
-    // Simulate auth check (will be replaced with real auth logic)
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-      // TEMPORARY: Bypass login for development
-      setIsSignedIn(true);
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, []);
+  const { token, isLoading } = useAuth();
 
   if (isLoading) {
     return (
@@ -40,7 +22,7 @@ export function RootNavigator() {
 
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      {isSignedIn ? (
+      {token ? (
         <Stack.Screen name="App" component={AppNavigator} />
       ) : (
         <Stack.Screen name="Auth" component={AuthNavigator} />

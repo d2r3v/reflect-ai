@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, TextInput } from "react-nativ
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { AuthStackParamList } from "../navigation/types";
 import { Colors } from "../constants/colors";
+import { useAuth } from "../context/AuthContext";
 
 type Props = NativeStackScreenProps<AuthStackParamList, "Signup">;
 
@@ -12,9 +13,28 @@ type Props = NativeStackScreenProps<AuthStackParamList, "Signup">;
  * TODO: Implement real auth flow.
  */
 export default function SignupScreen({ navigation }: Props) {
+  const { signUp } = useAuth();
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [confirmPassword, setConfirmPassword] = React.useState("");
+  const [isLoading, setIsLoading] = React.useState(false);
+
+  const handleSignup = async () => {
+    if (!email || !password || !confirmPassword) return;
+    if (password !== confirmPassword) {
+      alert("Passwords do not match");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await signUp(email, password);
+    } catch (error: any) {
+      alert(error.message || "Signup failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -45,8 +65,12 @@ export default function SignupScreen({ navigation }: Props) {
         secureTextEntry
       />
 
-      <TouchableOpacity style={styles.button}>
-        <Text style={styles.buttonText}>Create Account</Text>
+      <TouchableOpacity
+        style={[styles.button, isLoading && { opacity: 0.7 }]}
+        onPress={handleSignup}
+        disabled={isLoading}
+      >
+        <Text style={styles.buttonText}>{isLoading ? "Creating Account..." : "Create Account"}</Text>
       </TouchableOpacity>
 
       <TouchableOpacity onPress={() => navigation.navigate("Login")}>
