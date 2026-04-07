@@ -1,8 +1,9 @@
 import React from "react";
-import { View, Text, StyleSheet, FlatList } from "react-native";
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ScrollView } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { AppStackParamList } from "../navigation/types";
 import { Colors } from "../constants/colors";
+import { useAuth } from "../context/AuthContext";
 
 type Props = NativeStackScreenProps<AppStackParamList, "Home">;
 
@@ -12,13 +13,14 @@ type Props = NativeStackScreenProps<AppStackParamList, "Home">;
  * TODO: Implement real data fetching and layout.
  */
 export default function HomeScreen({ navigation }: Props) {
+  const { signOut } = useAuth();
   const recentConversations = [
     { id: "1", title: "Conversation 1", date: "Today" },
     { id: "2", title: "Conversation 2", date: "Yesterday" },
   ];
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container}>
       <Text style={styles.heading}>Welcome Back</Text>
 
       <View style={styles.section}>
@@ -45,7 +47,14 @@ export default function HomeScreen({ navigation }: Props) {
           <Text style={styles.actionText}>Check your mood</Text>
         </View>
       </View>
-    </View>
+
+      <TouchableOpacity
+        style={styles.logoutButton}
+        onPress={signOut}
+      >
+        <Text style={styles.logoutButtonText}>Sign Out</Text>
+      </TouchableOpacity>
+    </ScrollView>
   );
 }
 
@@ -97,5 +106,18 @@ const styles = StyleSheet.create({
   actionText: {
     fontSize: 16,
     color: Colors.text,
+  },
+  logoutButton: {
+    backgroundColor: Colors.danger,
+    padding: 16,
+    borderRadius: 8,
+    alignItems: "center",
+    marginTop: 8,
+    marginBottom: 32,
+  },
+  logoutButtonText: {
+    color: Colors.surface,
+    fontSize: 16,
+    fontWeight: "600",
   },
 });
