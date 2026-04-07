@@ -108,7 +108,6 @@ reflect-ai/
 │   │   └── services/       # API and SecureStore layers
 │   ├── App.tsx             # Root component
 │   └── app.json            # Expo config
-└── setup-wsl-port.ps1      # WSL port forwarding script
 ```
 
 ## Security
