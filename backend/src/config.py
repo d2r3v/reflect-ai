@@ -1,5 +1,9 @@
 """Configuration management using Pydantic settings."""
+from pathlib import Path
 from pydantic_settings import BaseSettings
+
+_BACKEND_DIR = Path(__file__).resolve().parent.parent  # /backend
+_DEFAULT_DB = f"sqlite+aiosqlite:///{_BACKEND_DIR / 'masc.db'}"
 
 
 class Settings(BaseSettings):
@@ -22,8 +26,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     
-    # Future: Database
-    database_url: str = "sqlite+aiosqlite:///./masc.db"
+    # Database
+    database_url: str = _DEFAULT_DB
     
     # Future: LLM/API keys
     openai_api_key: str = ""
@@ -34,3 +38,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+

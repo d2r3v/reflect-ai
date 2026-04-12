@@ -1,23 +1,44 @@
-import React from "react";
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ScrollView } from "react-native";
+import React, { useCallback, useState } from "react";
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ScrollView, ActivityIndicator } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useFocusEffect } from "@react-navigation/native";
 import { AppStackParamList } from "../navigation/types";
 import { Colors } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
+import { conversationsService, Conversation } from "../services/conversations";
 
 type Props = NativeStackScreenProps<AppStackParamList, "Home">;
 
-/**
- * HomeScreen
- * Main dashboard showing recent conversations, mood, and quick actions.
- * TODO: Implement real data fetching and layout.
- */
 export default function HomeScreen({ navigation }: Props) {
   const { signOut } = useAuth();
-  const recentConversations = [
-    { id: "1", title: "Conversation 1", date: "Today" },
-    { id: "2", title: "Conversation 2", date: "Yesterday" },
-  ];
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchConversations = useCallback(async () => {
+    try {
+      const data = await conversationsService.listConversations();
+      setConversations(data);
+    } catch (err) {
+      console.error("Failed to load conversations", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchConversations();
+    }, [fetchConversations])
+  );
+
+  const handleStartNewConversation = async () => {
+    try {
+      const conv = await conversationsService.createConversation();
+      navigation.navigate("Chat", { conversationId: conv.id });
+    } catch (err) {
+      console.error("Failed to create conversation", err);
+    }
+  };
 
   return (
     <ScrollView style={styles.container}>
@@ -25,33 +46,38 @@ export default function HomeScreen({ navigation }: Props) {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Recent Conversations</Text>
-        <FlatList
-          data={recentConversations}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <View style={styles.conversationCard}>
-              <Text style={styles.conversationTitle}>{item.title}</Text>
-              <Text style={styles.conversationDate}>{item.date}</Text>
-            </View>
-          )}
-          scrollEnabled={false}
-        />
+        {loading ? (
+          <ActivityIndicator size="small" color={Colors.primary} />
+        ) : conversations.length === 0 ? (
+          <Text style={styles.emptyText}>No conversations yet.</Text>
+        ) : (
+          <FlatList
+            data={conversations}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={styles.conversationCard}
+                onPress={() => navigation.navigate("Chat", { conversationId: item.id })}
+              >
+                <Text style={styles.conversationTitle}>{item.title}</Text>
+                <Text style={styles.conversationDate}>
+                  {new Date(item.created_at).toLocaleDateString()}
+                </Text>
+              </TouchableOpacity>
+            )}
+            scrollEnabled={false}
+          />
+        )}
       </View>
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Quick Actions</Text>
-        <View style={styles.actionCard}>
+        <TouchableOpacity style={styles.actionCard} onPress={handleStartNewConversation}>
           <Text style={styles.actionText}>Start a new conversation</Text>
-        </View>
-        <View style={styles.actionCard}>
-          <Text style={styles.actionText}>Check your mood</Text>
-        </View>
+        </TouchableOpacity>
       </View>
 
-      <TouchableOpacity
-        style={styles.logoutButton}
-        onPress={signOut}
-      >
+      <TouchableOpacity style={styles.logoutButton} onPress={signOut}>
         <Text style={styles.logoutButtonText}>Sign Out</Text>
       </TouchableOpacity>
     </ScrollView>
@@ -78,6 +104,10 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: Colors.text,
     marginBottom: 12,
+  },
+  emptyText: {
+    color: Colors.textSecondary,
+    fontStyle: 'italic',
   },
   conversationCard: {
     backgroundColor: Colors.surface,

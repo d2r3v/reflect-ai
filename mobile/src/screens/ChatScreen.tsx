@@ -1,70 +1,111 @@
-import React from "react";
-import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity } from "react-native";
+import React, { useState, useCallback } from "react";
+import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, ActivityIndicator } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useFocusEffect } from "@react-navigation/native";
 import { AppStackParamList } from "../navigation/types";
 import { Colors } from "../constants/colors";
+import { conversationsService, Message } from "../services/conversations";
 
 type Props = NativeStackScreenProps<AppStackParamList, "Chat">;
 
-/**
- * ChatScreen
- * Main chat interface for user-AI conversations.
- * TODO: Implement message sending, receiving, and real-time updates.
- */
-export default function ChatScreen({ navigation }: Props) {
-  const [inputText, setInputText] = React.useState("");
-  const [messages, setMessages] = React.useState([
-    { id: "1", role: "assistant", content: "Hi! How are you doing today?" },
-  ]);
+export default function ChatScreen({ route, navigation }: Props) {
+  const [inputText, setInputText] = useState("");
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [activeConvId, setActiveConvId] = useState<string | undefined>(route.params?.conversationId);
+
+  // Reload when tab changes or params change
+  useFocusEffect(
+    useCallback(() => {
+      // If we got here with a specific ID, use it
+      const id = route.params?.conversationId;
+      if (id) {
+        setActiveConvId(id);
+        fetchMessages(id);
+      } else if (!activeConvId) {
+        // If we just tapped the tab without an ID and don't have one active, clear chat
+        setMessages([]);
+      }
+    }, [route.params?.conversationId])
+  );
+
+  const fetchMessages = async (id: string) => {
+    setLoading(true);
+    try {
+      const convConfig = await conversationsService.getConversation(id);
+      setMessages(convConfig.messages);
+    } catch (error) {
+      console.error("Failed to load messages", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSendMessage = async () => {
-    if (!inputText.trim()) return;
-
-    const userMessage = { id: String(messages.length + 1), role: "user" as const, content: inputText };
-    setMessages((prev) => [...prev, userMessage]);
+    const text = inputText.trim();
+    if (!text) return;
     setInputText("");
 
-    try {
-      // For the vertical slice, we call the test endpoint
-      // Using Android localhost shortcut (10.0.2.2) if on emulator, or actual IP
-      // Using API_BASE_URL from env if available
-      const response = await fetch("http://10.0.2.2:8000/api/v1/chat/test");
-      const data = await response.json();
+    let currentConvId = activeConvId;
 
-      const assistantMessage = {
-        id: String(messages.length + 2),
-        role: "assistant" as const,
-        content: data.reply,
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+    // Create a conversation lazily if we don't have one yet
+    if (!currentConvId) {
+      try {
+        const conv = await conversationsService.createConversation();
+        currentConvId = conv.id;
+        setActiveConvId(currentConvId);
+        // Important: Update params so navigation state knows where we are
+        navigation.setParams({ conversationId: currentConvId });
+      } catch (err) {
+        console.error("Failed to create lazy conversation", err);
+        return;
+      }
+    }
+
+    try {
+      // We expect the backend to return [userMsg, assistantMsg]
+      const newMessages = await conversationsService.sendMessage(currentConvId, text);
+
+      // We can either append the returned messages or refetch. We'll append.
+      // Filter out any messages we already have by id just in case.
+      setMessages((prev) => {
+        const existingIds = new Set(prev.map(m => m.id));
+        const toAdd = newMessages.filter(m => !existingIds.has(m.id));
+        return [...prev, ...toAdd];
+      });
     } catch (error) {
-      console.error("Error fetching from backend:", error);
-      const errorMessage = {
-        id: String(messages.length + 3),
-        role: "assistant" as const,
-        content: "Error connecting to backend. Make sure the server is running.",
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      console.error("Error sending message:", error);
     }
   };
 
   return (
     <View style={styles.container}>
-      <FlatList
-        data={messages}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <View
-            style={[
-              styles.messageBubble,
-              item.role === "user" ? styles.userBubble : styles.assistantBubble,
-            ]}
-          >
-            <Text style={styles.messageText}>{item.content}</Text>
-          </View>
-        )}
-        contentContainerStyle={styles.messagesList}
-      />
+      {loading ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+        </View>
+      ) : (
+        <FlatList
+          data={messages}
+          keyExtractor={(item, index) => item.id || `temp-${index}`}
+          renderItem={({ item }) => (
+            <View
+              style={[
+                styles.messageBubble,
+                item.role === "user" ? styles.userBubble : styles.assistantBubble,
+              ]}
+            >
+              <Text style={item.role === "user" ? styles.userText : styles.assistantText}>
+                {item.content}
+              </Text>
+            </View>
+          )}
+          contentContainerStyle={styles.messagesList}
+          ListEmptyComponent={
+            <Text style={styles.emptyText}>Send a message to start chatting!</Text>
+          }
+        />
+      )}
 
       <View style={styles.inputContainer}>
         <TextInput
@@ -87,26 +128,44 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   messagesList: {
     padding: 16,
+    paddingBottom: 32, // Extra padding at bottom
+  },
+  emptyText: {
+    textAlign: "center",
+    marginTop: 40,
+    color: Colors.textSecondary,
+    fontStyle: 'italic',
   },
   messageBubble: {
     marginBottom: 12,
-    maxWidth: "80%",
-    padding: 12,
-    borderRadius: 8,
+    maxWidth: "85%",
+    padding: 14,
+    borderRadius: 16,
   },
   userBubble: {
     alignSelf: "flex-end",
     backgroundColor: Colors.primary,
+    borderBottomRightRadius: 4,
   },
   assistantBubble: {
     alignSelf: "flex-start",
     backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
+    borderBottomLeftRadius: 4,
   },
-  messageText: {
+  userText: {
+    fontSize: 16,
+    color: Colors.surface, // Assuming primary is dark enough
+  },
+  assistantText: {
     fontSize: 16,
     color: Colors.text,
   },
@@ -121,16 +180,22 @@ const styles = StyleSheet.create({
     flex: 1,
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: 8,
-    padding: 12,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
     marginRight: 8,
-    maxHeight: 100,
+    maxHeight: 120,
+    minHeight: 45,
+    backgroundColor: Colors.background,
   },
   sendButton: {
     backgroundColor: Colors.primary,
-    borderRadius: 8,
+    borderRadius: 20,
     justifyContent: "center",
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
+    height: 45,
+    alignSelf: "flex-end",
   },
   sendButtonText: {
     color: Colors.surface,

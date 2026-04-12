@@ -16,7 +16,7 @@ export type AuthStackParamList = {
 
 export type AppStackParamList = {
   Home: undefined;
-  Chat: undefined;
+  Chat: { conversationId?: string };
   MoodCheckin: undefined;
   MemoryInspector: undefined;
   CrisisSupport: undefined;
