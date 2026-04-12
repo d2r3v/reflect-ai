@@ -18,6 +18,11 @@ export interface ConversationDetail extends Conversation {
     messages: Message[];
 }
 
+export interface SendMessageResponse {
+    messages: Message[];
+    response_mode: string;
+}
+
 export const conversationsService = {
     /**
      * Create a new conversation
@@ -47,7 +52,7 @@ export const conversationsService = {
      * @param id Conversation ID
      * @param content Message text
      */
-    sendMessage: async (id: string, content: string): Promise<Message[]> => {
+    sendMessage: async (id: string, content: string): Promise<SendMessageResponse> => {
         return api.authPost(`/conversations/${id}/messages`, { content });
     },
 };

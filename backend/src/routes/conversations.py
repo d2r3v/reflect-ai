@@ -12,7 +12,10 @@ from src.db.session import get_db
 from src.db.models.user import User
 from src.db.models.conversation import Conversation
 from src.db.models.message import Message
+from src.db.models.safety_event import SafetyEvent
 from src.core.auth.dependencies import get_current_user
+from src.core.context.execution import ExecutionContext
+from src.services.safety import SafetyService, RiskLevel
 
 router = APIRouter(prefix="/api/v1/conversations", tags=["conversations"])
 
@@ -44,6 +47,10 @@ class ConversationOut(BaseModel):
 
 class ConversationDetail(ConversationOut):
     messages: list[MessageOut] = []
+
+class SendMessageResponse(BaseModel):
+    messages: list[MessageOut]
+    response_mode: str
 
 # ── Routes ──
 
@@ -101,7 +108,7 @@ async def get_conversation(
     }
 
 
-@router.post("/{conversation_id}/messages", response_model=list[MessageOut], status_code=status.HTTP_201_CREATED)
+@router.post("/{conversation_id}/messages", response_model=SendMessageResponse, status_code=status.HTTP_201_CREATED)
 async def send_message(
     conversation_id: str,
     body: MessageCreate,
@@ -121,13 +128,43 @@ async def send_message(
         content=body.content.strip(),
     )
     db.add(user_msg)
+    await db.flush()  # Flush to DB to get user_msg.id for the SafetyEvent if needed
 
-    # Generate mocked assistant reply
-    # TODO: Replace with real LLM orchestration
+    # Safety Classification
+    safety_service = SafetyService()
+    risk_level = await safety_service.classify_risk(user_msg.content)
+    
+    # Build the execution context (now sets the response_mode automatically)
+    ctx = ExecutionContext(
+        session_id=str(user.id), # A real session ID would be cooler, but user.id works for now
+        user_id=str(user.id),
+        conversation_id=str(conversation.id),
+        message_content=user_msg.content,
+        response_mode=safety_service.map_risk_to_mode(risk_level)
+    )
+
+    # Log safety events for elevated risk levels
+    if risk_level in [RiskLevel.HIGH, RiskLevel.CRITICAL]:
+        safety_event = SafetyEvent(
+            message_id=user_msg.id,
+            user_id=user.id,
+            level=risk_level.value
+        )
+        db.add(safety_event)
+
+    # Orchestration / Response Generation
+    if risk_level == RiskLevel.CRITICAL:
+        # Bypass standard generation entirely and return the deterministic crisis resource
+        reply_content = await safety_service.get_crisis_response()
+    else:
+        # Future: Call orchestrator to select Brain and execute it with `ctx`
+        # For now, mock it while explicitly displaying the selected mode.
+        reply_content = f"[{ctx.response_mode.value.upper()} MODE] I hear you. You said: \"{user_msg.content[:50]}...\"\n\n(Waiting for LLM integration)"
+
     assistant_msg = Message(
         conversation_id=conversation.id,
         role="assistant",
-        content=f"I hear you. You said: \"{body.content.strip()[:100]}\" — I'm here to support you.",
+        content=reply_content,
     )
     db.add(assistant_msg)
 
@@ -135,7 +172,10 @@ async def send_message(
     await db.refresh(user_msg)
     await db.refresh(assistant_msg)
 
-    return [_serialize_message(user_msg), _serialize_message(assistant_msg)]
+    return {
+        "messages": [_serialize_message(user_msg), _serialize_message(assistant_msg)],
+        "response_mode": ctx.response_mode.value,
+    }
 
 
 # ── Helpers ──

@@ -66,7 +66,8 @@ src/
 ├── server/
 │   └── app.py                # FastAPI factory + CORS + router registration
 ├── services/
-│   └── conversation.py       # ConversationService stub (future orchestration)
+│   ├── conversation.py       # ConversationService stub (future orchestration)
+│   └── safety.py             # SafetyService: RiskLevel enum, keyword classifier, crisis response
 └── orchestration/
     └── __init__.py            # Documented pipeline contract (not yet implemented)
 ```
@@ -139,18 +140,43 @@ The orchestrator (not yet built) will: build context → classify safety → ret
 
 ---
 
+## Safety Classification Pipeline
+
+Every `POST /conversations/:id/messages` runs this pipeline:
+
+1. Store user message → flush to get UUID
+2. `SafetyService.classify_risk()` — deterministic keyword matching
+3. `map_risk_to_mode()` — maps `RiskLevel` → `ResponseMode`
+4. Build `ExecutionContext` with the resolved mode
+5. If `HIGH` or `CRITICAL` → log a `SafetyEvent` to the database
+6. If `CRITICAL` → bypass LLM entirely, return hardcoded 988 crisis response
+7. Otherwise → generate response (mocked for now)
+
+### Risk Classification Rules (v1)
+
+| RiskLevel | → ResponseMode | Trigger examples |
+|---|---|---|
+| `low` | `reflect` | "I had a good day", normal conversation |
+| `medium` | `vent` | "so alone", "can't cope", "nobody cares" |
+| `high` | `grounding` | "hurt myself", "don't want to be here" |
+| `critical` | `crisis` | "kill myself", "want to die", "end my life" |
+
+Keyword lists are in `services/safety.py`. The classifier is intentionally simple and deterministic for v1.
+
+---
+
 ## Conversation API Endpoints
 
 All conversation routes require Bearer auth. Users can only access their own data.
 
-| Method | Path | Description |
+| Method | Path | Response |
 |---|---|---|
-| `POST` | `/api/v1/conversations` | Create a conversation |
-| `GET` | `/api/v1/conversations` | List user's conversations (newest first) |
-| `GET` | `/api/v1/conversations/:id` | Get conversation with ordered messages |
-| `POST` | `/api/v1/conversations/:id/messages` | Send message, get `[user_msg, assistant_msg]` back |
+| `POST` | `/api/v1/conversations` | `ConversationOut` |
+| `GET` | `/api/v1/conversations` | `ConversationOut[]` (newest first) |
+| `GET` | `/api/v1/conversations/:id` | `ConversationDetail` (with ordered messages) |
+| `POST` | `/api/v1/conversations/:id/messages` | `SendMessageResponse` — `{ messages: [...], response_mode: "reflect" }` |
 
-**Note**: The assistant reply is currently a mocked echo. No LLM integration yet.
+**Note**: The assistant reply is currently mocked. `response_mode` is returned so the frontend can adapt UI behavior per mode.
 
 ---
 
@@ -166,6 +192,6 @@ All conversation routes require Bearer auth. Users can only access their own dat
 
 ## Current Status
 
-**Completed**: Auth (E2E), Database (Alembic + SQLite), Conversation CRUD (frontend + backend), Execution architecture scaffolding.
+**Completed**: Auth (E2E), Database (Alembic + SQLite), Conversation CRUD (frontend + backend), Execution architecture scaffolding, Safety risk classifier with mode selection and crisis bypass.
 
 **Next up**: LLM integration (connect a Brain implementation to a real model), then wire it through the orchestrator to replace the mocked assistant reply.

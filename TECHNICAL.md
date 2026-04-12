@@ -40,7 +40,7 @@ User Message
    Response + Persist
 ```
 
-Currently, steps 2–5 are scaffolded but not implemented. The backend returns a mocked assistant reply.
+Currently, memory retrieval and tool execution are scaffolded but not implemented. The **safety classifier and mode selector are live** — critical messages bypass the pipeline entirely and return a deterministic crisis response.
 
 ---
 
@@ -103,6 +103,27 @@ class Brain(ABC):
 
 Each response mode will eventually map to a different Brain implementation (e.g., `ReflectBrain`, `CrisisBrain`).
 
+### Safety Service (`services/safety.py`)
+
+Deterministic, keyword-based risk classifier (v1). No ML dependencies.
+
+```python
+class RiskLevel(str, Enum):
+    LOW = "low"          # normal conversation
+    MEDIUM = "medium"    # emotional distress
+    HIGH = "high"        # severe distress, self-harm language
+    CRITICAL = "critical" # active crisis, immediate danger
+
+class SafetyService:
+    classify_risk(message: str) -> RiskLevel    # tiered keyword matching
+    map_risk_to_mode(risk: RiskLevel) -> ResponseMode
+    get_crisis_response() -> str                # hardcoded 988 lifeline message
+```
+
+**Mapping**: `low→reflect`, `medium→vent`, `high→grounding`, `critical→crisis`
+
+**Pipeline behavior**: HIGH/CRITICAL log a `SafetyEvent` to the DB. CRITICAL bypasses LLM generation entirely.
+
 ---
 
 ## Database Layer
@@ -161,7 +182,7 @@ Uses `hashlib.pbkdf2_hmac("sha256", ...)` with 260,000 iterations and a random 1
 | `POST /` | `{title?}` | `ConversationOut` (201) |
 | `GET /` | — | `ConversationOut[]` (200, newest first) |
 | `GET /:id` | — | `ConversationDetail` with `messages[]` (200) |
-| `POST /:id/messages` | `{content}` | `MessageOut[]` — `[user_msg, assistant_msg]` (201) |
+| `POST /:id/messages` | `{content}` | `SendMessageResponse` — `{ messages: [user, assistant], response_mode: "reflect" }` (201) |
 
 ### Other
 

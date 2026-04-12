@@ -63,8 +63,9 @@ export default function ChatScreen({ route, navigation }: Props) {
     }
 
     try {
-      // We expect the backend to return [userMsg, assistantMsg]
-      const newMessages = await conversationsService.sendMessage(currentConvId, text);
+      // We expect the backend to return { messages: [userMsg, assistantMsg], response_mode: "..." }
+      const response = await conversationsService.sendMessage(currentConvId, text);
+      const newMessages = response.messages;
 
       // We can either append the returned messages or refetch. We'll append.
       // Filter out any messages we already have by id just in case.
