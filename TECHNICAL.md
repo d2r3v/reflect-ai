@@ -40,7 +40,47 @@ User Message
    Response + Persist
 ```
 
-Currently, memory retrieval and tool execution are scaffolded but not implemented. The **safety classifier and mode selector are live** — critical messages bypass the pipeline entirely and return a deterministic crisis response.
+Currently, memory retrieval and tool execution are scaffolded but not implemented. Keyword lists are in `services/safety.py`. The classifier is intentionally simple and deterministic for v1.
+
+### Post-Crisis Cooldown (Sticky Safety State)
+
+After a crisis event, the system does not immediately trust "I'm fine." Instead, it enters a **post-crisis cooldown** with a classifier-driven exit.
+
+**State Machine**:
+```
+NORMAL ──(CRITICAL)──→ CRISIS
+CRISIS ──(LOW or MEDIUM)──→ POST_CRISIS
+CRISIS ──(HIGH or CRITICAL)──→ CRISIS (stays)
+POST_CRISIS ──(streak met + time met)──→ NORMAL
+POST_CRISIS ──(HIGH or CRITICAL)──→ CRISIS (re-escalate)
+```
+
+**Recovery counter rules** (during POST_CRISIS):
+| Classification | Counter effect |
+|---|---|
+| `LOW` | +1 |
+| `MEDIUM` | hold (no change) |
+| `HIGH`/`CRITICAL` | → re-escalate to CRISIS |
+
+**Exit conditions** (both must be met):
+- `post_crisis_low_streak >= POST_CRISIS_REQUIRED_LOW_STREAK` (default: 3)
+- Elapsed time since crisis ≥ `POST_CRISIS_MIN_DURATION_SECONDS` (default: 300)
+
+**Three separate concepts** (never conflated):
+- `risk_level` — what the classifier says (never mutated)
+- `safety_state` — conversation state (`normal`/`crisis`/`post_crisis`), stored on conversation
+- `response_mode` — how we respond, floored at `VENT` during `post_crisis`
+
+**Conversation-level state fields**: `safety_state`, `crisis_started_at`, `post_crisis_low_streak`
+
+**Config**: `POST_CRISIS_REQUIRED_LOW_STREAK` and `POST_CRISIS_MIN_DURATION_SECONDS` in `config.py`.
+
+**Frontend behavior**:
+| State | Banner | Crisis Card |
+|---|---|---|
+| `normal` | None | No |
+| `crisis` | Full warning (💛 "You're not alone") | Yes (with Call 988 button) |
+| `post_crisis` | Soft blue (🫂 "We're still here") | No |
 
 ---
 
@@ -182,7 +222,7 @@ Uses `hashlib.pbkdf2_hmac("sha256", ...)` with 260,000 iterations and a random 1
 | `POST /` | `{title?}` | `ConversationOut` (201) |
 | `GET /` | — | `ConversationOut[]` (200, newest first) |
 | `GET /:id` | — | `ConversationDetail` with `messages[]` (200) |
-| `POST /:id/messages` | `{content}` | `SendMessageResponse` — `{ messages: [user, assistant], response_mode: "reflect" }` (201) |
+| `POST /:id/messages` | `{content}` | `SendMessageResponse` — `{ messages: [...], response_mode, safety_state }` (201) |
 
 ### Other
 

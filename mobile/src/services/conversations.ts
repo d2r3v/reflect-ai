@@ -21,6 +21,7 @@ export interface ConversationDetail extends Conversation {
 export interface SendMessageResponse {
     messages: Message[];
     response_mode: string;
+    safety_state: "normal" | "crisis" | "post_crisis";
 }
 
 export const conversationsService = {

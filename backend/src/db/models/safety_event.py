@@ -11,6 +11,8 @@ class SafetyEvent(TimestampedBase):
     message_id: Mapped[str] = mapped_column(UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE"), index=True, nullable=True)
     user_id: Mapped[str] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     level: Mapped[str] = mapped_column(String(50), nullable=False)
+    response_mode: Mapped[str] = mapped_column(String(50), nullable=False)
+    crisis_bypass: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     # Relationships
     message = relationship("Message", back_populates="safety_events")

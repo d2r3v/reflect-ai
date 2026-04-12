@@ -1,8 +1,8 @@
-"""Initial schema
+"""Initial schema with safety events and state
 
-Revision ID: cfe556f25a4a
+Revision ID: 34da07402df8
 Revises: 
-Create Date: 2026-04-12 00:42:13.137176
+Create Date: 2026-04-12 02:12:02.646087
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'cfe556f25a4a'
+revision: str = '34da07402df8'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -37,6 +37,9 @@ def upgrade() -> None:
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('user_id', sa.UUID(), nullable=False),
     sa.Column('title', sa.String(length=255), nullable=True),
+    sa.Column('safety_state', sa.String(length=20), nullable=False),
+    sa.Column('crisis_started_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('post_crisis_low_streak', sa.Integer(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], name=op.f('fk_conversations_user_id_users'), ondelete='CASCADE'),
@@ -63,6 +66,8 @@ def upgrade() -> None:
     sa.Column('message_id', sa.UUID(), nullable=True),
     sa.Column('user_id', sa.UUID(), nullable=False),
     sa.Column('level', sa.String(length=50), nullable=False),
+    sa.Column('response_mode', sa.String(length=50), nullable=False),
+    sa.Column('crisis_bypass', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.ForeignKeyConstraint(['message_id'], ['messages.id'], name=op.f('fk_safety_events_message_id_messages'), ondelete='CASCADE'),

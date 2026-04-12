@@ -78,11 +78,9 @@ class SafetyService:
             Hardcoded crisis support message with resources
         """
         return (
-            "I'm deeply concerned about what you just shared. I want you to know "
-            "that your life has value, and there are people who want to support you right now.\n\n"
-            "Please call or text 988 immediately to reach the Suicide & Crisis Lifeline "
-            "(available 24/7, free, and confidential). You can also text HOME to 741741 "
-            "to connect with a Crisis Text Line counselor.\n\n"
-            "Please reach out to a professional who can help keep you safe. I am an AI, "
-            "and while I'm here to listen, I cannot provide the emergency support you deserve."
+            "I'm really glad you said something. You matter, and I'm concerned about your safety.\n\n"
+            "Please call or text 988 right now.\n\n"
+            "You can also text HOME to 741741 to reach a Crisis Text Line counselor — "
+            "available 24/7, free, and confidential.\n\n"
+            "I can stay with you here, but I'm not a substitute for immediate professional support."
         )

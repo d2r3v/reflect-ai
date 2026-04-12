@@ -106,9 +106,9 @@ src/
 All tables use UUID primary keys and `created_at`/`updated_at` timestamps.
 
 - **`users`**: `id`, `email` (unique, indexed), `hashed_password`, `is_active`
-- **`conversations`**: `id`, `user_id` (FK → users, cascade delete, indexed), `title`
+- **`conversations`**: `id`, `user_id` (FK → users, cascade delete, indexed), `title`, `safety_state`, `crisis_started_at`, `post_crisis_low_streak`
 - **`messages`**: `id`, `conversation_id` (FK → conversations, cascade delete, indexed), `role`, `content`
-- **`safety_events`**: `id`, `message_id` (FK → messages, nullable), `user_id` (FK → users), `level`
+- **`safety_events`**: `id`, `message_id` (FK → messages, nullable), `user_id` (FK → users), `level`, `response_mode`, `crisis_bypass`
 
 ---
 
@@ -161,7 +161,14 @@ Every `POST /conversations/:id/messages` runs this pipeline:
 | `high` | `grounding` | "hurt myself", "don't want to be here" |
 | `critical` | `crisis` | "kill myself", "want to die", "end my life" |
 
-Keyword lists are in `services/safety.py`. The classifier is intentionally simple and deterministic for v1.
+Keyword lists are in `services/safety.py`.
+
+### Post-Crisis Cooldown
+
+When a `crisis` event occurs, the system locks into a sticky `post_crisis` state instead of abruptly dropping back to `normal`. 
+- **Exit Strategy:** 3 consecutive `LOW` risk messages **AND** 5 minutes elapsed since crisis. (Configurable in `config.py`)
+- **Flooring:** During `post_crisis`, the `response_mode` is floored at `vent` regardless of the classifier output, ensuring a supportive tone.
+- **Re-escalation:** Any `HIGH` or `CRITICAL` message immediately re-escalates the state to `crisis`.
 
 ---
 

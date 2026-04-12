@@ -10,12 +10,15 @@ from sqlalchemy.orm import selectinload
 
 from src.db.session import get_db
 from src.db.models.user import User
+from datetime import datetime, timezone
 from src.db.models.conversation import Conversation
 from src.db.models.message import Message
 from src.db.models.safety_event import SafetyEvent
 from src.core.auth.dependencies import get_current_user
-from src.core.context.execution import ExecutionContext
+from src.core.context.execution import ExecutionContext, ResponseMode
 from src.services.safety import SafetyService, RiskLevel
+from src.config import settings
+from src.logging_config import logger
 
 router = APIRouter(prefix="/api/v1/conversations", tags=["conversations"])
 
@@ -51,6 +54,7 @@ class ConversationDetail(ConversationOut):
 class SendMessageResponse(BaseModel):
     messages: list[MessageOut]
     response_mode: str
+    safety_state: str
 
 # ── Routes ──
 
@@ -134,26 +138,94 @@ async def send_message(
     safety_service = SafetyService()
     risk_level = await safety_service.classify_risk(user_msg.content)
     
-    # Build the execution context (now sets the response_mode automatically)
+    # Define 'now' for state timestamps
+    now = datetime.now(timezone.utc)
+    
+    # 1. State Machine Transition Logic
+    new_state = conversation.safety_state
+    new_streak = conversation.post_crisis_low_streak
+    
+    if risk_level in [RiskLevel.CRITICAL]:
+        new_state = "crisis"
+        conversation.crisis_started_at = now
+        new_streak = 0
+    elif conversation.safety_state == "crisis":
+        if risk_level in [RiskLevel.LOW, RiskLevel.MEDIUM]:
+            new_state = "post_crisis"  # de-escalate linearly
+            new_streak = 1 if risk_level == RiskLevel.LOW else 0
+        else:
+            new_state = "crisis"       # HIGH stays in crisis
+    elif conversation.safety_state == "post_crisis":
+        if risk_level in [RiskLevel.HIGH, RiskLevel.CRITICAL]:
+            new_state = "crisis"       # re-escalate
+            conversation.crisis_started_at = now
+            new_streak = 0
+        else:
+            # Update streak
+            if risk_level == RiskLevel.LOW:
+                new_streak += 1
+            # MEDIUM holds the streak (no change)
+
+            elapsed = 0
+            if conversation.crisis_started_at:
+                crisis_time = conversation.crisis_started_at
+                if crisis_time.tzinfo is None:
+                    crisis_time = crisis_time.replace(tzinfo=timezone.utc)
+                elapsed = (now - crisis_time).total_seconds()
+                
+            if new_streak >= settings.post_crisis_required_low_streak and elapsed >= settings.post_crisis_min_duration_seconds:
+                new_state = "normal"
+                new_streak = 0
+            else:
+                new_state = "post_crisis"
+
+    # Persist the state
+    conversation.safety_state = new_state
+    conversation.post_crisis_low_streak = new_streak
+
+    # 2. Response Mode Determination (Applying Floor)
+    classifier_mode = safety_service.map_risk_to_mode(risk_level)
+    
+    if new_state == "post_crisis":
+        # Do not allow response mode to fall below VENT during cooldown
+        if risk_level == RiskLevel.LOW:
+            actual_mode = ResponseMode.VENT
+        else:
+            actual_mode = classifier_mode
+    elif new_state == "crisis" or classifier_mode == ResponseMode.CRISIS:
+        actual_mode = ResponseMode.CRISIS
+    else:
+        actual_mode = classifier_mode
+
+    # Build the execution context
     ctx = ExecutionContext(
-        session_id=str(user.id), # A real session ID would be cooler, but user.id works for now
+        session_id=str(user.id),
         user_id=str(user.id),
         conversation_id=str(conversation.id),
         message_content=user_msg.content,
-        response_mode=safety_service.map_risk_to_mode(risk_level)
+        response_mode=actual_mode
     )
 
-    # Log safety events for elevated risk levels
-    if risk_level in [RiskLevel.HIGH, RiskLevel.CRITICAL]:
+    # Log safety events to DB for elevated risk levels OR if we're in elevated state
+    crisis_bypass_triggered = (actual_mode == ResponseMode.CRISIS)
+    if risk_level in [RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL] or new_state != "normal":
         safety_event = SafetyEvent(
             message_id=user_msg.id,
             user_id=user.id,
-            level=risk_level.value
+            level=risk_level.value,
+            response_mode=ctx.response_mode.value,
+            crisis_bypass=crisis_bypass_triggered
         )
         db.add(safety_event)
+        
+        # Emit structured Python log
+        logger.info(
+            f"SAFETY | user={user.id} conv={conversation.id} msg={user_msg.id} "
+            f"risk={risk_level.value} state={new_state} mode={ctx.response_mode.value} bypass={str(crisis_bypass_triggered).lower()}"
+        )
 
     # Orchestration / Response Generation
-    if risk_level == RiskLevel.CRITICAL:
+    if actual_mode == ResponseMode.CRISIS:
         # Bypass standard generation entirely and return the deterministic crisis resource
         reply_content = await safety_service.get_crisis_response()
     else:
@@ -175,6 +247,7 @@ async def send_message(
     return {
         "messages": [_serialize_message(user_msg), _serialize_message(assistant_msg)],
         "response_mode": ctx.response_mode.value,
+        "safety_state": new_state
     }
 
 
