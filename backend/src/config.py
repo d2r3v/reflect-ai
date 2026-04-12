@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     
     # Future: Database
-    database_url: str = "postgresql://user:password@localhost/masc_db"
+    database_url: str = "sqlite+aiosqlite:///./masc.db"
     
     # Future: LLM/API keys
     openai_api_key: str = ""

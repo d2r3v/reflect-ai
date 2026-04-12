@@ -5,7 +5,7 @@
 
 **Reflect AI** is a memory-aware support companion that persists context across conversations and adapts responses based on user state and safety signals.
 
-Instead of treating each message as isolated, it builds a structured understanding of the user over time — enabling more consistent, contextual, and safer interactions.
+Instead of treating each message as isolated, it builds a structured understanding of the user over time - enabling more consistent, contextual, and safer interactions.
 
 ## What it does
 
