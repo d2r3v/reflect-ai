@@ -40,7 +40,47 @@ User Message
    Response + Persist
 ```
 
-Currently, steps 2–5 are scaffolded but not implemented. The backend returns a mocked assistant reply.
+Currently, memory retrieval and tool execution are scaffolded but not implemented. Keyword lists are in `services/safety.py`. The classifier is intentionally simple and deterministic for v1.
+
+### Post-Crisis Cooldown (Sticky Safety State)
+
+After a crisis event, the system does not immediately trust "I'm fine." Instead, it enters a **post-crisis cooldown** with a classifier-driven exit.
+
+**State Machine**:
+```
+NORMAL ──(CRITICAL)──→ CRISIS
+CRISIS ──(LOW or MEDIUM)──→ POST_CRISIS
+CRISIS ──(HIGH or CRITICAL)──→ CRISIS (stays)
+POST_CRISIS ──(streak met + time met)──→ NORMAL
+POST_CRISIS ──(HIGH or CRITICAL)──→ CRISIS (re-escalate)
+```
+
+**Recovery counter rules** (during POST_CRISIS):
+| Classification | Counter effect |
+|---|---|
+| `LOW` | +1 |
+| `MEDIUM` | hold (no change) |
+| `HIGH`/`CRITICAL` | → re-escalate to CRISIS |
+
+**Exit conditions** (both must be met):
+- `post_crisis_low_streak >= POST_CRISIS_REQUIRED_LOW_STREAK` (default: 3)
+- Elapsed time since crisis ≥ `POST_CRISIS_MIN_DURATION_SECONDS` (default: 300)
+
+**Three separate concepts** (never conflated):
+- `risk_level` — what the classifier says (never mutated)
+- `safety_state` — conversation state (`normal`/`crisis`/`post_crisis`), stored on conversation
+- `response_mode` — how we respond, floored at `VENT` during `post_crisis`
+
+**Conversation-level state fields**: `safety_state`, `crisis_started_at`, `post_crisis_low_streak`
+
+**Config**: `POST_CRISIS_REQUIRED_LOW_STREAK` and `POST_CRISIS_MIN_DURATION_SECONDS` in `config.py`.
+
+**Frontend behavior**:
+| State | Banner | Crisis Card |
+|---|---|---|
+| `normal` | None | No |
+| `crisis` | Full warning (💛 "You're not alone") | Yes (with Call 988 button) |
+| `post_crisis` | Soft blue (🫂 "We're still here") | No |
 
 ---
 
@@ -103,6 +143,27 @@ class Brain(ABC):
 
 Each response mode will eventually map to a different Brain implementation (e.g., `ReflectBrain`, `CrisisBrain`).
 
+### Safety Service (`services/safety.py`)
+
+Deterministic, keyword-based risk classifier (v1). No ML dependencies.
+
+```python
+class RiskLevel(str, Enum):
+    LOW = "low"          # normal conversation
+    MEDIUM = "medium"    # emotional distress
+    HIGH = "high"        # severe distress, self-harm language
+    CRITICAL = "critical" # active crisis, immediate danger
+
+class SafetyService:
+    classify_risk(message: str) -> RiskLevel    # tiered keyword matching
+    map_risk_to_mode(risk: RiskLevel) -> ResponseMode
+    get_crisis_response() -> str                # hardcoded 988 lifeline message
+```
+
+**Mapping**: `low→reflect`, `medium→vent`, `high→grounding`, `critical→crisis`
+
+**Pipeline behavior**: HIGH/CRITICAL log a `SafetyEvent` to the DB. CRITICAL bypasses LLM generation entirely.
+
 ---
 
 ## Database Layer
@@ -161,7 +222,7 @@ Uses `hashlib.pbkdf2_hmac("sha256", ...)` with 260,000 iterations and a random 1
 | `POST /` | `{title?}` | `ConversationOut` (201) |
 | `GET /` | — | `ConversationOut[]` (200, newest first) |
 | `GET /:id` | — | `ConversationDetail` with `messages[]` (200) |
-| `POST /:id/messages` | `{content}` | `MessageOut[]` — `[user_msg, assistant_msg]` (201) |
+| `POST /:id/messages` | `{content}` | `SendMessageResponse` — `{ messages: [...], response_mode, safety_state }` (201) |
 
 ### Other
 

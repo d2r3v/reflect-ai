@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     
+    # Safety
+    post_crisis_required_low_streak: int = 3
+    post_crisis_min_duration_seconds: int = 300
+    
     # Database
     database_url: str = _DEFAULT_DB
     
