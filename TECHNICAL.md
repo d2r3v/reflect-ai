@@ -18,7 +18,7 @@ User Message
          │
          ▼
 ┌──────────────────┐
-│ Safety Classifier│  Determine ResponseMode (reflect/vent/plan/grounding/crisis)
+│ Safety Classifier│  Determine RiskLevel + 3-state SafetyState → ResponseMode
 └────────┬─────────┘
          │
          ▼
@@ -33,14 +33,15 @@ User Message
          │
          ▼
 ┌──────────────────┐
-│ Brain            │  Generate response using selected strategy
+│ BrainRouter      │  Select Brain based on ResponseMode
 └────────┬─────────┘
-         │
+         │          ├── CrisisBrain (deterministic, no LLM)
+         │          └── CompanionBrain → LLMProvider → OpenAI
          ▼
    Response + Persist
 ```
 
-Currently, memory retrieval and tool execution are scaffolded but not implemented. Keyword lists are in `services/safety.py`. The classifier is intentionally simple and deterministic for v1.
+Memory retrieval and tool execution are scaffolded but not yet implemented. **Safety classification, mode selection, crisis bypass, sticky post-crisis cooldown, and real LLM generation via `CompanionBrain` are all live.**
 
 ### Post-Crisis Cooldown (Sticky Safety State)
 
@@ -134,14 +135,42 @@ class Tool(ABC):                  # Implement this to add a new tool
 
 **ToolRegistry** (`core/tools/registry.py`): Central discovery. `register(tool)`, `get(name)`, `list_tools()`, `describe_all()` (for LLM prompt injection).
 
-### Brain (`core/brains/base.py`)
+### Brain System (`core/brains/`)
 
 ```python
 class Brain(ABC):
     async def generate(ctx: ExecutionContext) -> str
+
+class CompanionBrain(Brain):   # mode-aware: sends per-mode system prompt to LLM
+class CrisisBrain(Brain):      # deterministic: returns hardcoded 988 response, no LLM
 ```
 
-Each response mode will eventually map to a different Brain implementation (e.g., `ReflectBrain`, `CrisisBrain`).
+#### BrainRouter (`core/brains/router.py`)
+
+Maps `ResponseMode` → `Brain`:
+- `CRISIS` → `CrisisBrain()`
+- Everything else → `CompanionBrain(provider)`
+
+#### CompanionBrain System Prompts
+
+| Mode | Tone |
+|---|---|
+| `reflect` | Empathetic, exploratory, asks a follow-up question |
+| `vent` | Active listening, validates feelings, minimal advice |
+| `plan` | Structured, goal-oriented, breaks problems into steps |
+| `grounding` | Calm, concise sensory/breathing exercises |
+
+### LLM Provider (`core/llm/`)
+
+```python
+class LLMProvider(ABC):
+    async def complete(messages, model, temperature, max_tokens) -> str
+
+class OpenAIProvider(LLMProvider):  # wraps openai.AsyncOpenAI
+    def __init__(api_key, default_model)
+```
+
+The provider is configured in `config.py` (`openai_api_key`, `openai_model`) and instantiated in the conversation route. Swapping the provider later requires no changes to any Brain.
 
 ### Safety Service (`services/safety.py`)
 
@@ -263,3 +292,12 @@ RootNavigator
 3. Fallback → `localhost:8000`
 
 All authenticated requests go through `api.authGet` / `api.authPost` which read the token from `expo-secure-store`.
+
+---
+
+## Current Status
+
+**Completed**: Auth (E2E), Database (Alembic + SQLite), Conversation CRUD (frontend + backend), Execution architecture scaffolding, Safety risk classifier with mode selection, crisis bypass, sticky post-crisis cooldown, safety event logging, **LLM response generation via `CompanionBrain`/`CrisisBrain` with OpenAI**, and crisis-aware frontend UI.
+
+**Next up**: Pass conversation history into the LLM context (currently only the most recent user message is sent), then implement memory retrieval into `ctx.retrieved_memories`.
+

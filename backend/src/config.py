@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     
     # Future: LLM/API keys
     openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
     
     class Config:
         env_file = ".env"

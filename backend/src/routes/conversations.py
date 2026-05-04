@@ -16,6 +16,8 @@ from src.db.models.message import Message
 from src.db.models.safety_event import SafetyEvent
 from src.core.auth.dependencies import get_current_user
 from src.core.context.execution import ExecutionContext, ResponseMode
+from src.core.llm.openai_provider import OpenAIProvider
+from src.core.brains.router import BrainRouter
 from src.services.safety import SafetyService, RiskLevel
 from src.config import settings
 from src.logging_config import logger
@@ -225,13 +227,19 @@ async def send_message(
         )
 
     # Orchestration / Response Generation
-    if actual_mode == ResponseMode.CRISIS:
-        # Bypass standard generation entirely and return the deterministic crisis resource
-        reply_content = await safety_service.get_crisis_response()
-    else:
-        # Future: Call orchestrator to select Brain and execute it with `ctx`
-        # For now, mock it while explicitly displaying the selected mode.
-        reply_content = f"[{ctx.response_mode.value.upper()} MODE] I hear you. You said: \"{user_msg.content[:50]}...\"\n\n(Waiting for LLM integration)"
+    try:
+        # We instantiate this here for now. A DI container would be better in the future.
+        provider = OpenAIProvider(api_key=settings.openai_api_key, default_model=settings.openai_model)
+        brain_router = BrainRouter(provider=provider)
+        
+        # Route to the appropriate brain
+        active_brain = brain_router.route(ctx)
+        
+        # Generate!
+        reply_content = await active_brain.generate(ctx)
+    except Exception as e:
+        logger.error(f"Failed to generate response: {e}")
+        reply_content = "I'm sorry, I'm having unexpected trouble thinking right now."
 
     assistant_msg = Message(
         conversation_id=conversation.id,
