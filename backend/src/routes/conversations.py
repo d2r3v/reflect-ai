@@ -19,6 +19,7 @@ from src.core.context.execution import ExecutionContext, ResponseMode
 from src.core.llm.openai_provider import OpenAIProvider
 from src.core.brains.router import BrainRouter
 from src.services.safety import SafetyService, RiskLevel
+from src.services.memory import MemoryService
 from src.config import settings
 from src.logging_config import logger
 
@@ -199,13 +200,25 @@ async def send_message(
     else:
         actual_mode = classifier_mode
 
+    # Retrieve relevant memories (skipped during crisis — deterministic path only)
+    memory_service = MemoryService()
+    retrieved_memories: list[dict] = []
+    if actual_mode != ResponseMode.CRISIS:
+        retrieved_memories = await memory_service.retrieve_memories(
+            user_id=str(user.id),
+            query=user_msg.content,
+            db=db,
+            limit=5,
+        )
+
     # Build the execution context
     ctx = ExecutionContext(
         session_id=str(user.id),
         user_id=str(user.id),
         conversation_id=str(conversation.id),
         message_content=user_msg.content,
-        response_mode=actual_mode
+        response_mode=actual_mode,
+        retrieved_memories=retrieved_memories,
     )
 
     # Log safety events to DB for elevated risk levels OR if we're in elevated state
@@ -247,6 +260,19 @@ async def send_message(
         content=reply_content,
     )
     db.add(assistant_msg)
+
+    # Extract and persist memories from this user message (never from crisis messages)
+    if actual_mode != ResponseMode.CRISIS:
+        facts = memory_service.extract_from_message(
+            content=user_msg.content,
+            source_message_id=str(user_msg.id),
+        )
+        if facts:
+            await memory_service.persist_memories(
+                user_id=str(user.id),
+                facts=facts,
+                db=db,
+            )
 
     await db.commit()
     await db.refresh(user_msg)
