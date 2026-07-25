@@ -23,7 +23,7 @@ User Message
          │
          ▼
 ┌──────────────────┐
-│ Memory Retrieval │  Fetch relevant past context (future)
+│ Memory Retrieval │  Inject recent stored insights into the prompt (SQLite RAG)
 └────────┬─────────┘
          │
          ▼
@@ -36,12 +36,12 @@ User Message
 │ BrainRouter      │  Select Brain based on ResponseMode
 └────────┬─────────┘
          │          ├── CrisisBrain (deterministic, no LLM)
-         │          └── CompanionBrain → LLMProvider → OpenAI
+         │          └── CompanionBrain → LLMProvider → Anthropic / OpenAI
          ▼
    Response + Persist
 ```
 
-Memory retrieval and tool execution are scaffolded but not yet implemented. **Safety classification, mode selection, crisis bypass, sticky post-crisis cooldown, and real LLM generation via `CompanionBrain` are all live.**
+Tool execution is scaffolded but not yet implemented. **Safety classification, mode selection, crisis bypass, sticky post-crisis cooldown, memory extraction/retrieval, conversation auto-titling, and real LLM generation via `CompanionBrain` are all live.**
 
 ### Post-Crisis Cooldown (Sticky Safety State)
 
@@ -166,11 +166,14 @@ Maps `ResponseMode` → `Brain`:
 class LLMProvider(ABC):
     async def complete(messages, model, temperature, max_tokens) -> str
 
-class OpenAIProvider(LLMProvider):  # wraps openai.AsyncOpenAI
+class AnthropicProvider(LLMProvider):  # wraps anthropic.AsyncAnthropic (default)
+    def __init__(api_key, default_model="claude-sonnet-5")
+
+class OpenAIProvider(LLMProvider):     # wraps openai.AsyncOpenAI
     def __init__(api_key, default_model)
 ```
 
-The provider is configured in `config.py` (`openai_api_key`, `openai_model`) and instantiated in the conversation route. Swapping the provider later requires no changes to any Brain.
+`create_llm_provider()` (`core/llm/factory.py`) selects the implementation from `LLM_PROVIDER` (`anthropic` default, or `openai`); each provider carries its own `default_model`, so Brains stay agnostic. Config lives in `config.py` (`llm_provider`, `anthropic_api_key`/`anthropic_model`, `openai_api_key`/`openai_model`). `AnthropicProvider` splits the `system` message out to the top-level API parameter and disables extended thinking for fast chat replies.
 
 ### Safety Service (`services/safety.py`)
 
@@ -193,6 +196,20 @@ class SafetyService:
 
 **Pipeline behavior**: HIGH/CRITICAL log a `SafetyEvent` to the DB. CRITICAL bypasses LLM generation entirely.
 
+### Memory Service (`services/memory.py`)
+
+Lightweight, deterministic keyword-based memory. Plain string storage in SQLite — **no vector database**.
+
+```python
+class MemoryService:
+    extract_memory(db, user_id, message, source_message_id=None) -> Memory | None
+    retrieve_memories(db, user_id, limit=5) -> list[Memory]
+```
+
+- **Extraction**: scans each user message for trigger phrases mapped to a category — `coping_strategy`, `preference`, or `recurring_stressor` — and stores the relevant sentence. Exact-duplicate insights are skipped, and elevated-risk turns (crisis/grounding) are not stored.
+- **Retrieval / injection**: `CompanionBrain` fetches the user's most recent insights and appends them to the system prompt so replies can reference the user's history.
+- **Transparency**: surfaced to the client via `GET /api/v1/memories` and the Memory Inspector screen.
+
 ---
 
 ## Database Layer
@@ -213,10 +230,11 @@ All models inherit from `TimestampedBase` which provides `created_at` and `updat
 | `Conversation` | `conversations` | `user` (many-to-one), `messages` (one-to-many, cascade) |
 | `Message` | `messages` | `conversation` (many-to-one), `safety_events` (one-to-many, cascade) |
 | `SafetyEvent` | `safety_events` | `message` (many-to-one, nullable), `user` (many-to-one) |
+| `Memory` | `memories` | `user` (many-to-one); columns `category`, `content`, `source_message_id` |
 
 ### Migrations
 
-Managed via Alembic with the async template. `render_as_batch=True` is enabled for SQLite compatibility. Run `alembic upgrade head` from the `backend/` directory.
+Managed via Alembic with the async template. `render_as_batch=True` is enabled for SQLite compatibility. Run `alembic upgrade head` from the `backend/` directory. Latest migration `b7f3c2a19d40` adds the `memories` table.
 
 ---
 
@@ -251,7 +269,15 @@ Uses `hashlib.pbkdf2_hmac("sha256", ...)` with 260,000 iterations and a random 1
 | `POST /` | `{title?}` | `ConversationOut` (201) |
 | `GET /` | — | `ConversationOut[]` (200, newest first) |
 | `GET /:id` | — | `ConversationDetail` with `messages[]` (200) |
-| `POST /:id/messages` | `{content}` | `SendMessageResponse` — `{ messages: [...], response_mode, safety_state }` (201) |
+| `POST /:id/messages` | `{content}` | `SendMessageResponse` — `{ messages: [...], response_mode, safety_state, title }` (201) |
+
+> On its first message, a conversation is auto-titled from that message (LLM summary with a snippet fallback); the resolved `title` is returned in `SendMessageResponse`.
+
+### Memories (`/api/v1/memories`) — Requires Bearer auth
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /` | — | `MemoryOut[]` — `{ id, category, content, created_at }` (200, newest first) |
 
 ### Other
 
@@ -266,7 +292,7 @@ Uses `hashlib.pbkdf2_hmac("sha256", ...)` with 260,000 iterations and a random 1
 
 ### State Management
 
-- **AuthContext**: Holds `{token, isLoading, isLoggedIn}`. Bootstraps from `expo-secure-store` on app launch. Exposes `signIn`, `signUp`, `signOut`.
+- **AuthContext**: Holds `{token, isLoading, isLoggedIn}`. Bootstraps the token from the cross-platform `storage` module on app launch. Exposes `signIn`, `signUp`, `signOut`.
 - **No global conversation state**: Each screen fetches its own data via `conversationsService`. This is intentional to keep things simple before adding a state manager.
 
 ### Navigation
@@ -286,18 +312,18 @@ RootNavigator
 
 ### Networking
 
-`api.ts` resolves the backend URL dynamically:
-1. If `__DEV__` + `hostUri` available → use the host IP from Expo debugger
-2. If Android emulator → `10.0.2.2:8000`
+`api.ts` resolves the backend URL dynamically in dev:
+1. Derive the host from Expo's `hostUri` (the machine running Metro) → `http://<host>:8000/api/v1`
+2. On the Android emulator, `localhost`/`127.0.0.1` is rewritten to `10.0.2.2` (the emulator's alias for the host machine)
 3. Fallback → `localhost:8000`
 
-All authenticated requests go through `api.authGet` / `api.authPost` which read the token from `expo-secure-store`.
+All authenticated requests go through `api.authGet` / `api.authPost`, which read the token from the cross-platform `storage` module (`storage.ts`): `expo-secure-store` on native, `localStorage` on web.
 
 ---
 
 ## Current Status
 
-**Completed**: Auth (E2E), Database (Alembic + SQLite), Conversation CRUD (frontend + backend), Execution architecture scaffolding, Safety risk classifier with mode selection, crisis bypass, sticky post-crisis cooldown, safety event logging, **LLM response generation via `CompanionBrain`/`CrisisBrain` with OpenAI**, and crisis-aware frontend UI.
+**Completed**: Auth (E2E), Database (Alembic + SQLite), Conversation CRUD (frontend + backend), Execution architecture scaffolding, Safety risk classifier with mode selection, crisis bypass, sticky post-crisis cooldown, safety event logging, **LLM response generation via `CompanionBrain`/`CrisisBrain` (Anthropic default, OpenAI optional)**, **SQLite RAG memory (extraction, retrieval, prompt injection, Memory Inspector)**, conversation auto-titling, and crisis-aware frontend UI.
 
-**Next up**: Pass conversation history into the LLM context (currently only the most recent user message is sent), then implement memory retrieval into `ctx.retrieved_memories`.
+**Next up**: Pass conversation history into the LLM context (currently only the most recent user message is sent), and upgrade keyword-based memory to semantic (vector) retrieval.
 
