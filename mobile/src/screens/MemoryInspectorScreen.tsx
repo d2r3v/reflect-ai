@@ -1,37 +1,55 @@
-import React from "react";
-import { View, Text, StyleSheet, FlatList } from "react-native";
+import React, { useState, useCallback } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  ActivityIndicator,
+  RefreshControl,
+  TouchableOpacity,
+} from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { AppStackParamList } from "../navigation/types";
 import { Colors } from "../constants/colors";
+import { memoryService, Memory } from "../services/memory";
 
 type Props = NativeStackScreenProps<AppStackParamList, "MemoryInspector">;
 
 /**
  * MemoryInspectorScreen
- * Allows users to view extracted memories and see memory transparency.
- * TODO: Implement memory editing, deletion, and categorization.
+ * Transparently shows the user every insight the AI has learned about them,
+ * fetched live from GET /api/v1/memories.
  */
 export default function MemoryInspectorScreen({ navigation }: Props) {
-  const [memories] = React.useState([
-    {
-      id: "1",
-      category: "recurring_stressor",
-      content: "Work deadlines cause anxiety",
-      extractedAt: "2 days ago",
-    },
-    {
-      id: "2",
-      category: "coping_strategy",
-      content: "Deep breathing exercises help calm down",
-      extractedAt: "1 week ago",
-    },
-    {
-      id: "3",
-      category: "preference",
-      content: "Prefers reflection over advice",
-      extractedAt: "3 days ago",
-    },
-  ]);
+  const [memories, setMemories] = useState<Memory[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    setError(null);
+    try {
+      const data = await memoryService.listMemories();
+      setMemories(data);
+    } catch (e) {
+      console.error("Failed to load memories", e);
+      setError("Couldn't load your memories. Pull down to try again.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  // Refetch every time the screen comes into focus so newly-learned insights
+  // appear right after chatting.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
   const getCategoryColor = (category: string) => {
     switch (category) {
@@ -46,22 +64,67 @@ export default function MemoryInspectorScreen({ navigation }: Props) {
     }
   };
 
-  const getCategoryLabel = (category: string) => {
-    return category.replace("_", " ").toUpperCase();
+  const getCategoryLabel = (category: string) =>
+    category.replace(/_/g, " ").toUpperCase();
+
+  const formatRelative = (iso: string) => {
+    const then = new Date(iso).getTime();
+    if (isNaN(then)) return "";
+    const diffMs = Date.now() - then;
+    const mins = Math.max(0, Math.floor(diffMs / 60000));
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} hr${hrs === 1 ? "" : "s"} ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days} day${days === 1 ? "" : "s"} ago`;
   };
 
-  return (
-    <View style={styles.container}>
-      <Text style={styles.heading}>Your Memories</Text>
-      <Text style={styles.subtitle}>
-        These are insights the AI has learned about you.
-      </Text>
+  const renderBody = () => {
+    if (loading) {
+      return (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+        </View>
+      );
+    }
 
+    if (error) {
+      return (
+        <View style={styles.centered}>
+          <Text style={styles.emptyText}>{error}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={() => load()}>
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    return (
       <FlatList
         data={memories}
         keyExtractor={(item) => item.id}
+        contentContainerStyle={memories.length === 0 && styles.flexGrow}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} />
+        }
+        ListEmptyComponent={
+          <View style={styles.centered}>
+            <Text style={styles.emptyTitle}>No memories yet</Text>
+            <Text style={styles.emptyText}>
+              Keep chatting — when you share what helps you, a stressor, or a
+              preference, it'll show up here so you can see exactly what I've
+              learned.
+            </Text>
+          </View>
+        }
         renderItem={({ item }) => (
-          <View style={styles.memoryCard}>
+          <View
+            style={[
+              styles.memoryCard,
+              { borderLeftColor: getCategoryColor(item.category) },
+            ]}
+          >
             <View style={styles.memoryHeader}>
               <View
                 style={[
@@ -73,12 +136,24 @@ export default function MemoryInspectorScreen({ navigation }: Props) {
                   {getCategoryLabel(item.category)}
                 </Text>
               </View>
-              <Text style={styles.extractedDate}>{item.extractedAt}</Text>
+              <Text style={styles.extractedDate}>
+                {formatRelative(item.created_at)}
+              </Text>
             </View>
             <Text style={styles.memoryContent}>{item.content}</Text>
           </View>
         )}
       />
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.heading}>Your Memories</Text>
+      <Text style={styles.subtitle}>
+        These are insights the AI has learned about you.
+      </Text>
+      {renderBody()}
     </View>
   );
 }
@@ -99,6 +174,38 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.textSecondary,
     marginBottom: 24,
+  },
+  flexGrow: {
+    flexGrow: 1,
+  },
+  centered: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: Colors.text,
+    marginBottom: 8,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: Colors.primary,
+  },
+  retryText: {
+    color: Colors.surface,
+    fontWeight: "600",
   },
   memoryCard: {
     backgroundColor: Colors.surface,
