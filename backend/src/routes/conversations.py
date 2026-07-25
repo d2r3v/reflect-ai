@@ -16,9 +16,10 @@ from src.db.models.message import Message
 from src.db.models.safety_event import SafetyEvent
 from src.core.auth.dependencies import get_current_user
 from src.core.context.execution import ExecutionContext, ResponseMode
-from src.core.llm.openai_provider import OpenAIProvider
+from src.core.llm.factory import create_llm_provider
 from src.core.brains.router import BrainRouter
 from src.services.safety import SafetyService, RiskLevel
+from src.services.memory import MemoryService
 from src.config import settings
 from src.logging_config import logger
 
@@ -57,6 +58,7 @@ class SendMessageResponse(BaseModel):
     messages: list[MessageOut]
     response_mode: str
     safety_state: str
+    title: str
 
 # ── Routes ──
 
@@ -199,6 +201,15 @@ async def send_message(
     else:
         actual_mode = classifier_mode
 
+    # Memory extraction (RAG): learn durable insights from the user's message.
+    # Skip elevated-risk turns — we don't want to store distress as an "insight".
+    memory_service = MemoryService()
+    if actual_mode not in (ResponseMode.CRISIS, ResponseMode.GROUNDING):
+        try:
+            await memory_service.extract_memory(db, user.id, user_msg.content, user_msg.id)
+        except Exception as e:
+            logger.error(f"Memory extraction failed (non-fatal): {e}")
+
     # Build the execution context
     ctx = ExecutionContext(
         session_id=str(user.id),
@@ -229,17 +240,29 @@ async def send_message(
     # Orchestration / Response Generation
     try:
         # We instantiate this here for now. A DI container would be better in the future.
-        provider = OpenAIProvider(api_key=settings.openai_api_key, default_model=settings.openai_model)
-        brain_router = BrainRouter(provider=provider)
+        provider = create_llm_provider()
+        brain_router = BrainRouter(provider=provider, memory_service=memory_service, db=db)
         
         # Route to the appropriate brain
         active_brain = brain_router.route(ctx)
         
         # Generate!
         reply_content = await active_brain.generate(ctx)
+
+        # Auto-title the conversation from its first message (normal modes only).
+        if conversation.title in (None, "", "New Conversation") and actual_mode not in (ResponseMode.CRISIS, ResponseMode.GROUNDING):
+            conversation.title = await _generate_conversation_title(provider, user_msg.content)
     except Exception as e:
         logger.error(f"Failed to generate response: {e}")
         reply_content = "I'm sorry, I'm having unexpected trouble thinking right now."
+
+    # Ensure a meaningful title even if generation was skipped or failed.
+    if conversation.title in (None, "", "New Conversation"):
+        conversation.title = (
+            "Support session"
+            if actual_mode in (ResponseMode.CRISIS, ResponseMode.GROUNDING)
+            else _snippet_title(user_msg.content)
+        )
 
     assistant_msg = Message(
         conversation_id=conversation.id,
@@ -255,7 +278,8 @@ async def send_message(
     return {
         "messages": [_serialize_message(user_msg), _serialize_message(assistant_msg)],
         "response_mode": ctx.response_mode.value,
-        "safety_state": new_state
+        "safety_state": new_state,
+        "title": conversation.title,
     }
 
 
@@ -285,3 +309,37 @@ def _serialize_conversation(c: Conversation) -> dict:
 
 def _serialize_message(m: Message) -> dict:
     return {"id": str(m.id), "role": m.role, "content": m.content, "created_at": m.created_at}
+
+
+def _snippet_title(text: str) -> str:
+    """Deterministic fallback title: first few words of the message, capitalized."""
+    words = text.strip().split()
+    if not words:
+        return "New Conversation"
+    snippet = " ".join(words[:6])
+    snippet = snippet[0].upper() + snippet[1:]
+    return snippet[:60]
+
+
+async def _generate_conversation_title(provider, message: str) -> str:
+    """Generate a short, human-readable conversation title from the first message.
+    Falls back to a cleaned snippet if the LLM call fails."""
+    prompt = [
+        {
+            "role": "system",
+            "content": (
+                "Generate a concise 3-5 word title in Title Case summarizing the topic of the "
+                "user's message. Reply with ONLY the title — no quotes, no trailing punctuation."
+            ),
+        },
+        {"role": "user", "content": message},
+    ]
+    try:
+        raw = await provider.complete(messages=prompt, model=provider.default_model, max_tokens=16)
+        if raw:
+            title = raw.strip().strip('"').strip().splitlines()[0].strip().rstrip(".!?,").strip()
+            if title:
+                return title[:60]
+    except Exception as e:
+        logger.warning(f"Title generation failed, using snippet: {e}")
+    return _snippet_title(message)
