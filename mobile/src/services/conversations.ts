@@ -22,6 +22,7 @@ export interface SendMessageResponse {
     messages: Message[];
     response_mode: string;
     safety_state: "normal" | "crisis" | "post_crisis";
+    title: string;
 }
 
 export const conversationsService = {

@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useRef } from "react";
-import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, ActivityIndicator, Linking } from "react-native";
+import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, ActivityIndicator, Linking, KeyboardAvoidingView, Platform } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
+import { useHeaderHeight } from "@react-navigation/elements";
 import { AppStackParamList } from "../navigation/types";
 import { Colors } from "../constants/colors";
 import { conversationsService, Message } from "../services/conversations";
@@ -13,12 +14,19 @@ interface LocalMessage extends Message {
 }
 
 export default function ChatScreen({ route, navigation }: Props) {
+  const headerHeight = useHeaderHeight();
   const [inputText, setInputText] = useState("");
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeConvId, setActiveConvId] = useState<string | undefined>(route.params?.conversationId);
   const [safetyState, setSafetyState] = useState<"normal" | "crisis" | "post_crisis">("normal");
+  const [convTitle, setConvTitle] = useState<string>("");
   const lastLoadedConvId = useRef<string | undefined>(undefined);
+
+  // Reflect the conversation's title in the screen header.
+  React.useLayoutEffect(() => {
+    navigation.setOptions({ title: convTitle || "Chat" });
+  }, [navigation, convTitle]);
 
   // Reload when tab changes or params change
   useFocusEffect(
@@ -32,6 +40,7 @@ export default function ChatScreen({ route, navigation }: Props) {
       } else if (!id && !activeConvId) {
         // If we just tapped the tab without an ID and don't have one active, clear chat
         setMessages([]);
+        setConvTitle("");
       }
     }, [route.params?.conversationId])
   );
@@ -41,6 +50,7 @@ export default function ChatScreen({ route, navigation }: Props) {
     try {
       const convConfig = await conversationsService.getConversation(id);
       setMessages(convConfig.messages);
+      setConvTitle(convConfig.title || "");
       // Don't reset safetyState on refetch — it's driven by sendMessage responses only
     } catch (error) {
       console.error("Failed to load messages", error);
@@ -74,6 +84,7 @@ export default function ChatScreen({ route, navigation }: Props) {
       // We expect the backend to return { messages: [userMsg, assistantMsg], response_mode: "...", safety_state: "..." }
       const response = await conversationsService.sendMessage(currentConvId, text);
       const backendSafetyState = response.safety_state || "normal";
+      if (response.title) setConvTitle(response.title);
 
       // Update our explicit crisis mode state based on latest backend decision
       setSafetyState(backendSafetyState);
@@ -97,7 +108,11 @@ export default function ChatScreen({ route, navigation }: Props) {
   };
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={headerHeight}
+    >
       {loading ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={Colors.primary} />
@@ -191,7 +206,7 @@ export default function ChatScreen({ route, navigation }: Props) {
           <Text style={styles.sendButtonText}>Send</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
