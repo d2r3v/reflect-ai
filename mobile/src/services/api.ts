@@ -6,28 +6,29 @@ import Constants from 'expo-constants';
 
 import { Platform } from 'react-native';
 
-// For Android emulator, localhost is 10.0.2.2
 const getBaseUrl = () => {
     const debuggerHost = Constants.expoConfig?.hostUri;
     if (__DEV__) {
-        if (debuggerHost) {
-            const host = debuggerHost.split(':')[0];
-            return `http://${host}:8000/api/v1`;
+        let host = debuggerHost ? debuggerHost.split(':')[0] : undefined;
+        // Inside the Android emulator, `localhost` is the emulator itself — the host
+        // machine (where the backend runs) is reachable at 10.0.2.2. Metro connects
+        // over adb reverse as localhost, so rewrite it here.
+        if (Platform.OS === 'android' && (!host || host === 'localhost' || host === '127.0.0.1')) {
+            host = '10.0.2.2';
         }
-        // Fallback for Android emulator
-        if (Platform.OS === 'android') {
-            return 'http://10.0.2.2:8000/api/v1';
+        if (host) {
+            return `http://${host}:8000/api/v1`;
         }
     }
     return 'http://localhost:8000/api/v1'; // Default
 };
 
-import * as SecureStore from 'expo-secure-store';
+import { storage } from './storage';
 
 export const API_URL = getBaseUrl();
 
 const getAuthHeaders = async () => {
-    const token = await SecureStore.getItemAsync('auth_token');
+    const token = await storage.getItemAsync('auth_token');
     return {
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),

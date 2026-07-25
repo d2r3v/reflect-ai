@@ -2,7 +2,7 @@
  * Auth Service
  * Handles API calls for login/signup and manages token persistence.
  */
-import * as SecureStore from 'expo-secure-store';
+import { storage } from './storage';
 import { API_URL } from './api';
 
 const TOKEN_KEY = 'auth_token';
@@ -87,20 +87,20 @@ export const authService = {
      * Persist token to secure storage
      */
     async saveToken(token: string) {
-        await SecureStore.setItemAsync(TOKEN_KEY, token);
+        await storage.setItemAsync(TOKEN_KEY, token);
     },
 
     /**
      * Load token from secure storage
      */
     async loadToken() {
-        return await SecureStore.getItemAsync(TOKEN_KEY);
+        return await storage.getItemAsync(TOKEN_KEY);
     },
 
     /**
      * Remove token from secure storage
      */
     async clearToken() {
-        await SecureStore.deleteItemAsync(TOKEN_KEY);
+        await storage.deleteItemAsync(TOKEN_KEY);
     },
 };
