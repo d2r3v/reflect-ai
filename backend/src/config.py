@@ -33,9 +33,12 @@ class Settings(BaseSettings):
     # Database
     database_url: str = _DEFAULT_DB
     
-    # Future: LLM/API keys
+    # LLM / API keys
+    llm_provider: str = "anthropic"  # "anthropic" | "openai"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-5"
     
     class Config:
         env_file = ".env"
